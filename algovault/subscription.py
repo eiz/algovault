@@ -57,9 +57,10 @@
 #   that people can use, anyway?
 import base64
 import json
+import sys
 
 from algosdk.future import template, transaction
-from algosdk import encoding, util
+from algosdk import encoding, logic, util
 from algosdk.kmd import KMDClient
 from algosdk.v2client.algod import AlgodClient
 import click
@@ -83,11 +84,12 @@ def _encode_app_address(app_id):
 
 
 class SubscriptionAccount(template.Template):
+    # See gen_template for the source code to this signature program.
     CODE = base64.b64decode(
         "BSABASYCIENDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDA1N1Yig1AIAgQ"
         "kJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkI1ASkxF1AtNAEEKTEXUC00AA"
-        "QRMSAyAxIQRDEQIhJAACUxEIEGEkAAAQAxGBaACEFBQUFBQUFBEjEZIhIxGYECEhE"
-        "QRCJDMQiBABIxCSgSEEQiQw=="
+        "QRMSAyAxIQMQEyABIQRDEQIhJAACUxEIEGEkAAAQAxGBaACEFBQUFBQUFBEjEZIhI"
+        "xGYECEhEQRCJDMQiBABIxCSgSEEQiQw=="
     )
 
     def __init__(self, app_id, sender, receiver):
@@ -102,7 +104,7 @@ class SubscriptionAccount(template.Template):
         code = SubscriptionAccount.CODE
         code = replace(code, encoding.decode_address(self.receiver), 7, 32)
         code = replace(code, encoding.decode_address(self.sender), 48, 32)
-        code = replace(code, self.app_id.to_bytes(8, "big"), 127, 8)
+        code = replace(code, self.app_id.to_bytes(8, "big"), 133, 8)
         return code
 
 
@@ -111,19 +113,12 @@ def _subtoken_approval(cash_asset_id, sub_asset_id):
     scratch_subscribe_blob = ScratchVar(TealType.bytes)
     success = Return(Int(1))
     data_key = Bytes("")
-
-    # Subscribe args
-    # sub_account
-    # receiver
-    # amount
-    # interval
-
+    # Aliases for subscribe call arguments.
     arg_payment_sender = Txn.sender()
     arg_sub_account = Txn.application_args[1]
     arg_payment_receiver = Txn.application_args[2]
     arg_amount = Txn.application_args[3]
     arg_interval = Txn.application_args[4]
-
     on_subscribe = Seq(
         Assert(Len(arg_sub_account) == Int(32)),
         Assert(Len(arg_payment_receiver) == Int(32)),
@@ -148,7 +143,6 @@ def _subtoken_approval(cash_asset_id, sub_asset_id):
         ),
         success,
     )
-
     on_dispense = Seq(
         scratch_subscribe_blob.store(App.localGet(arg_sub_account, data_key)),
         Assert(
@@ -188,7 +182,6 @@ def _subtoken_approval(cash_asset_id, sub_asset_id):
         ),
         success,
     )
-
     on_opt_in = Seq(
         # Subscribe transaction must follow opt-in in the group
         Assert(Txn.group_index() + Int(1) < Global.group_size()),
@@ -210,31 +203,14 @@ def _subtoken_approval(cash_asset_id, sub_asset_id):
                     Gtxn[related_index.load()].application_args[2],
                     Bytes(SubscriptionAccount.CODE[39:48]),
                     Gtxn[related_index.load()].sender(),
-                    Bytes(SubscriptionAccount.CODE[80:127]),
+                    Bytes(SubscriptionAccount.CODE[80:133]),
                     Itob(Global.current_application_id()),
-                    Bytes(SubscriptionAccount.CODE[135:]),
+                    Bytes(SubscriptionAccount.CODE[141:]),
                 )
             )
         ),
         success,
     )
-
-    on_opt_out = Seq(
-        InnerTxnBuilder.Begin(),
-        InnerTxnBuilder.SetFields(
-            {
-                TxnField.type_enum: TxnType.Payment,
-                TxnField.receiver: Txn.sender(),
-                TxnField.amount: Int(0),
-                TxnField.close_remainder_to: Substring(
-                    App.localGet(Txn.sender(), data_key), Int(32), Int(64)
-                ),
-            }
-        ),
-        InnerTxnBuilder.Submit(),
-        success,
-    )
-
     on_initialize = Seq(
         Assert(Txn.sender() == Global.creator_address()),
         InnerTxnBuilder.Begin(),
@@ -304,7 +280,9 @@ def _subtoken_approval(cash_asset_id, sub_asset_id):
     program = Cond(
         [Txn.application_id() == Int(0), success],
         [Txn.on_completion() == OnComplete.OptIn, on_opt_in],
-        [Txn.on_completion() == OnComplete.CloseOut, on_opt_out],
+        # Close-out is always allowed. Sub account logicsig controls approval
+        # and disbursement of remaining balance.
+        [Txn.on_completion() == OnComplete.CloseOut, success],
         [Txn.on_completion() == OnComplete.NoOp, on_noop],
         *debug_conds
     )
@@ -468,6 +446,30 @@ def cash_out(sender, amount, cash_asset_id, sub_asset_id, app_id):
     _atomic_swap(b"CashOut", sender, amount, sub_asset_id, cash_asset_id, app_id)
 
 
+def _get_sub_account_secret(kcl, acl, wallet_handle, pw, sender, app_id):
+    private_key = kcl.export_key(wallet_handle, pw, sender)
+    secret = base64.b64decode(
+        util.sign_bytes(b"Subscription" + app_id.to_bytes(8, "big"), private_key)
+    )
+    return secret
+
+
+def _get_sub_account_data(info, app_id):
+    for app_state in info["apps-local-state"]:
+        if app_state["id"] == app_id:
+            for kv in app_state["key-value"]:
+                if kv["key"] == "":
+                    data = base64.b64decode(kv["value"]["bytes"])
+                    return {
+                        "sender": encoding.encode_address(data[0:32]),
+                        "receiver": encoding.encode_address(data[32:64]),
+                        "amount": int.from_bytes(data[64:72], "big"),
+                        "interval": int.from_bytes(data[72:80], "big"),
+                        "next": int.from_bytes(data[80:88], "big"),
+                    }
+    return None
+
+
 def _find_free_sub_account(
     kcl: KMDClient,
     acl: AlgodClient,
@@ -477,18 +479,13 @@ def _find_free_sub_account(
     app_id: int,
     max_index: int = 64,
 ):
-    private_key = kcl.export_key(wallet_handle, pw, sender)
-    secret = base64.b64decode(
-        util.sign_bytes(b"Subscription" + app_id.to_bytes(8, "big"), private_key)
-    )
-
+    secret = _get_sub_account_secret(kcl, acl, wallet_handle, pw, sender, app_id)
     for i in range(max_index):
         account = NamedAccount(app_id, secret + i.to_bytes(8, "big"))
         address = account.get_address()
         info = acl.account_info(address)
         if info["amount"] == 0:
             return account, i
-
     raise Exception("Couldn't find a free subscription slot to use.")
 
 
@@ -557,7 +554,6 @@ def request(
     group = [fund_txn, optin_txn, sub_txn, initial_payment_txn]
     transaction.assign_group_id(group)
     output = {}
-
     if sign_sender:
         output["optin"] = encoding.msgpack_encode(
             transaction.LogicSigTransaction(
@@ -592,6 +588,68 @@ def submit(sender_file, receiver_file):
         encoding.future_msgpack_decode(sender_json["optin"]),
         encoding.future_msgpack_decode(sender_json["sub"]),
         encoding.future_msgpack_decode(sender_json["initial_payment"]),
+    ]
+    group_txid = acl.send_transactions(group)
+    transaction.wait_for_confirmation(acl, group_txid, 5)
+
+
+@command_group.command("list")
+@click.option("--sender", required=True)
+@click.option("--app_id", type=click.INT, required=True, default=DEFAULT_APP_ID)
+@click.option("--max_index", type=click.INT, required=True, default=64)
+def list_cmd(sender, app_id, max_index):
+    kcl, acl, wallet_handle, pw = get_wallet()
+    secret = _get_sub_account_secret(kcl, acl, wallet_handle, pw, sender, app_id)
+    for i in range(max_index):
+        account = NamedAccount(app_id, secret + i.to_bytes(8, "big"))
+        info = acl.account_info(account.get_address())
+        sub_data = _get_sub_account_data(info, app_id)
+        if sub_data is not None:
+            print("Account:", account.get_address(), sub_data)
+
+
+@command_group.command()
+@click.option("--signer", required=True)
+@click.option("--sub_address", required=True)
+@click.option("--app_id", type=click.INT, required=True, default=DEFAULT_APP_ID)
+def close(signer, sub_address, app_id):
+    kcl, acl, wallet_handle, pw = get_wallet()
+    suggested_params = acl.suggested_params()
+    sub_data = _get_sub_account_data(acl.account_info(sub_address), app_id)
+    sub_account = SubscriptionAccount(app_id, sub_data["sender"], sub_data["receiver"])
+    if sub_data is None:
+        click.echo("Couldn't find a subscription at the given address", err=True)
+        sys.exit(1)
+    optout_txn = transaction.ApplicationCloseOutTxn(
+        sub_address, suggested_params, app_id
+    )
+    close_txn = transaction.PaymentTxn(
+        sub_address,
+        suggested_params,
+        sub_data["receiver"],
+        0,
+        close_remainder_to=sub_data["receiver"],
+    )
+    group = [optout_txn, close_txn]
+    transaction.assign_group_id(group)
+    program = sub_account.get_program()
+    private_key = kcl.export_key(wallet_handle, pw, signer)
+    group = [
+        transaction.LogicSigTransaction(
+            tx,
+            transaction.LogicSigAccount(
+                program,
+                [
+                    logic.teal_sign_from_program(
+                        private_key,
+                        b"Sub"
+                        + base64.b32decode(encoding._correct_padding(tx.get_txid())),
+                        program,
+                    )
+                ],
+            ),
+        )
+        for tx in group
     ]
     group_txid = acl.send_transactions(group)
     transaction.wait_for_confirmation(acl, group_txid, 5)
@@ -654,14 +712,17 @@ def gen_template():
     store_receiver = ScratchVar(TealType.bytes)
     store_sender = ScratchVar(TealType.bytes)
     sig_blob = Concat(Bytes("Sub"), Txn.tx_id())
-
     verify_payment = Seq(
         Assert(
-            And(Txn.amount() == Int(0), Txn.close_remainder_to() == Bytes(receiver))
+            And(
+                # Must be a close-out transaction
+                Txn.amount() == Int(0),
+                # Receiver always pays for the sub account, so receiver always gets the refund.
+                Txn.close_remainder_to() == Bytes(receiver),
+            )
         ),
         Approve(),
     )
-
     verify_app_call = Seq(
         Assert(
             And(
@@ -674,7 +735,6 @@ def gen_template():
         ),
         Approve(),
     )
-
     program = Seq(
         store_receiver.store(Bytes(receiver)),
         store_sender.store(Bytes(sender)),
@@ -684,7 +744,10 @@ def gen_template():
                     Ed25519Verify(sig_blob, Arg(0), store_sender.load()),
                     Ed25519Verify(sig_blob, Arg(0), store_receiver.load()),
                 ),
+                # Don't allow further rekeys
                 Txn.rekey_to() == Global.zero_address(),
+                # Don't allow excessive fees
+                Txn.fee() == Global.min_txn_fee(),
             )
         ),
         Cond(
