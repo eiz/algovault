@@ -1,29 +1,23 @@
 import base64
-import hashlib
 import sys
 
 from algosdk import encoding
 from algosdk.constants import MIN_TXN_FEE
 from algosdk.future import template, transaction
-from algosdk.v2client import algod
 import click
 from pyteal import *
 
-from algovault.client import get_algod, get_kmd
+from algovault.client import get_algod, get_kmd, raw_signing_address, sha512_256
 
-
-def _sha512_256(data):
-    h = hashlib.new("sha512_256")
-    h.update(data)
-    return h.digest()
+# testnet app id
+DEFAULT_APP_ID = 46576018
+# 16 local bytes keys + 100k opt-in balance + 100k base balance
+MINIMUM_BALANCE = 16 * 50000 + 100000 + 100000
+MINIMUM_TXN_FEE = 1000
 
 
 def _lsig(program, txn):
     return transaction.LogicSigTransaction(txn, transaction.LogicSigAccount(program))
-
-
-def _raw_signing_address(signer):
-    return base64.b64encode(encoding.decode_address(signer)).decode("utf-8")
 
 
 def _approval_program():
@@ -64,7 +58,7 @@ class NamedAccount(template.Template):
         template.put_uvarint(program, 5)
         program.append(0x80)  # pushbytes
         template.put_uvarint(program, 32)
-        program.extend(_sha512_256(self.name))
+        program.extend(sha512_256(self.name))
         program.append(0x81)  # pushint
         template.put_uvarint(program, self.name_service_id)
         # pop; pop; pushint 1
@@ -72,7 +66,7 @@ class NamedAccount(template.Template):
         return bytes(program)
 
     def initialize(self, sp, funding_address, update_authority):
-        assert acl is not None
+        acl = get_algod()
         program = self.get_program()
         addr = self.get_address()
         fund_txn = transaction.PaymentTxn(
@@ -107,13 +101,6 @@ class NamedAccount(template.Template):
         )
         transaction.assign_group_id([close_out, payback])
         return close_out, payback
-
-
-# testnet app id
-DEFAULT_APP_ID = 46576018
-# 16 local bytes keys + 100k opt-in balance + 100k base balance
-MINIMUM_BALANCE = 16 * 50000 + 100000 + 100000
-MINIMUM_TXN_FEE = 1000
 
 
 @click.group("name")
@@ -180,10 +167,10 @@ def name_delete(signer, receiver, name):
     wallet_handle = kcl.init_wallet_handle(wallets[0]["id"], "")
     close_out, payback = acct.close(suggested_params, receiver)
     signed_close_out = kcl.sign_transaction(
-        wallet_handle, "", close_out, signing_address=_raw_signing_address(signer)
+        wallet_handle, "", close_out, signing_address=raw_signing_address(signer)
     )
     signed_payback = kcl.sign_transaction(
-        wallet_handle, "", payback, signing_address=_raw_signing_address(signer)
+        wallet_handle, "", payback, signing_address=raw_signing_address(signer)
     )
     txid = acl.send_transactions([signed_close_out, signed_payback])
     transaction.wait_for_confirmation(acl, txid, 5)
@@ -208,7 +195,7 @@ def name_update(signer, name, index, data):
         wallet_handle,
         "",
         txn,
-        signing_address=_raw_signing_address(signer),
+        signing_address=raw_signing_address(signer),
     )
     acl.send_transaction(signed_txn)
     transaction.wait_for_confirmation(acl, signed_txn.get_txid(), 5)
@@ -224,9 +211,14 @@ def name_get(name, index):
     b64_index = base64.b64encode(index.encode("utf-8")).decode("utf-8")
     for app_state in info["apps-local-state"]:
         if app_state["id"] == DEFAULT_APP_ID:
-            for key_value in app_state["key-value"]:
-                if key_value["key"] == b64_index:
-                    print(base64.b64decode(key_value["value"]["bytes"]).decode("utf-8"))
-                    return
+            if "key-value" in app_state:
+                for key_value in app_state["key-value"]:
+                    if key_value["key"] == b64_index:
+                        print(
+                            base64.b64decode(key_value["value"]["bytes"]).decode(
+                                "utf-8"
+                            )
+                        )
+                        return
     click.echo("couldn't find a value for the given key", err=True)
     sys.exit(1)

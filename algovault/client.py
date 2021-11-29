@@ -1,8 +1,10 @@
+import base64
+import hashlib
 import os
 import sys
 from typing import Optional
 
-from algosdk import kmd
+from algosdk import kmd, encoding
 from algosdk.v2client import algod
 import click
 from os import path
@@ -29,8 +31,25 @@ def get_kmd():
     return kcl
 
 
+def get_wallet():
+    kcl = get_kmd()
+    acl = get_algod()
+    wallets = kcl.list_wallets()
+    wallet_handle = kcl.init_wallet_handle(wallets[0]["id"], "")
+    return (kcl, acl, wallet_handle, "")
+
+
+def raw_signing_address(signer):
+    return base64.b64encode(encoding.decode_address(signer)).decode("utf-8")
+
+
+def sha512_256(data):
+    h = hashlib.new("sha512_256")
+    h.update(data)
+    return h.digest()
+
+
 def init_environ():
-    print("init environ")
     global kcl, acl, ALGORAND_DATA
     if not "ALGORAND_DATA" in os.environ:
         click.echo("ALGORAND_DATA environment variable must be set.", err=True)
