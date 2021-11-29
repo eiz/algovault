@@ -1,3 +1,9 @@
+# A quick and dirty name service. Probably not secure, has virtually no
+# features, but very cheap. The idea here is that we hash the name, embed it
+# (and the app ID) into a LogicSig, then rekey that LogicSig account to an
+# update authority. There's 0 bullshit: no forced auctions or other
+# speculator-bait, just send in the minimum balance for a 16-slot storage and
+# away you go.
 import base64
 import sys
 

@@ -1,3 +1,60 @@
+# ... There was an attempt. This isn't working/completed yet.
+#
+# In principle: a simple subscription payments service which offers some nice
+# features for the end user. The most obvious ways of doing subscription
+# payments on Algorand are not really attractive as a merchant for a few
+# reasons:
+#
+# 1. You can use escrow accounts, as provided by the PeriodicPayment template in
+#    the SDK. There's a number of problems with this. Each subscription requires
+#    its own escrow account, which will have a separate balance from your main
+#    account (not good wallet UX), there is no on-chain record of who is being
+#    paid by whom except by groveling through transaction logs, they are not
+#    easy to cancel, they make an assumption about block time that's not a
+#    guaranteed part of the protocol, etc.
+#
+# 2. You can create wallet software with bill-pay type functionality. This can
+#    be made to work reasonably well, but as a merchant I do not want to rely on
+#    the user running specific client software in order for me to get paid. Have
+#    to add the feature to N different wallet programs.
+#
+# This module attempts to implement a somewhat streamlined version of #1.
+# Instead of using accounts as an escrow, we use a token which can be atomically
+# swapped for an underlying asset. This token has a clawback contract which
+# allows a designated receiver to periodically withdraw funds from the sender
+# address. Some advantages:
+#
+# 1. Either the sender or receiver can cancel the contract at any time.
+# 2. Subscriptions are easily enumerable by the sender using only current (non
+#    archival) on-chain metadata. The way this works is by building
+#    NamedAccounts using a secret only the wallet owner knows, plus a sequence
+#    number. The NamedAccount is then rekeyed to a LogicSig which implements the
+#    cancellation logic. An unlimited number of subscriptions are supported by
+#    storing the payment state inside local storage on the per-subscription
+#    account, which never contains any funds other than minimum balances.
+#
+#    Enumerability means that a dapp or wallet can provide a management UI that
+#    shows all of your subscriptions, their payment dates, your spend over time,
+#    and so on, which is a much nicer experience than what you get subscribing
+#    to things with a credit card.
+# 3. If you have many subscriptions, you don't need to fund escrow accounts
+#    separately for each one. Accounts do exist for each subscription, but they
+#    never hold the actual funds.
+#
+# The downside is, well, it's still not fully automatic. But you can just grab a
+# bag of these tokens and they're as good as cash for anyone who receives them.
+#
+# TODO
+# - Actually test/finish dispense/unsubscribe/enumerate flows :rofl:
+# - Test suite
+# - Move off of NamedAccounts to something with a stronger sig. The current
+#   implementation is technically susceptible to front-running DoS attacks. The
+#   thing about NamedAccounts is they need to be globally discoverable without
+#   knowing the owner, but we don't care about that here.
+# - Implement staking of native ALGOs instead of just ASAs. I might want to keep
+#   the implementation of that separate from this though, so rewards can be
+#   properly distributed. I think there's already some tokenizations like wALGO
+#   that people can use, anyway?
 import base64
 import json
 
