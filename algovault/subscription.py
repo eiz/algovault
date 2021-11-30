@@ -1,4 +1,4 @@
-# ... There was an attempt. This isn't working/completed yet.
+# ... There was an attempt. This isn't really tested and probably has vulns.
 #
 # In principle: a simple subscription payments service which offers some nice
 # features for the end user. The most obvious ways of doing subscription
@@ -40,12 +40,12 @@
 # 3. If you have many subscriptions, you don't need to fund escrow accounts
 #    separately for each one. Accounts do exist for each subscription, but they
 #    never hold the actual funds.
+# 4. Receiver pays most fees, including the minimum balance for the sub account.
 #
 # The downside is, well, it's still not fully automatic. But you can just grab a
 # bag of these tokens and they're as good as cash for anyone who receives them.
 #
 # TODO
-# - Actually test/finish dispense/unsubscribe/enumerate flows :rofl:
 # - Test suite
 # - Move off of NamedAccounts to something with a stronger sig. The current
 #   implementation is technically susceptible to front-running DoS attacks. The
@@ -187,6 +187,7 @@ def _subtoken_approval(cash_asset_id, sub_asset_id):
         Assert(Txn.group_index() + Int(1) < Global.group_size()),
         related_index.store(Txn.group_index() + Int(1)),
         Assert(Gtxn[related_index.load()].type_enum() == TxnType.ApplicationCall),
+        Assert(Gtxn[related_index.load()].on_completion() == OnComplete.NoOp),
         Assert(Gtxn[related_index.load()].application_args[0] == Bytes(b"Subscribe")),
         # And must be sent to the same app
         Assert(
