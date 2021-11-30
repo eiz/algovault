@@ -57,6 +57,8 @@
 #   that people can use, anyway?
 # - TypeScript implementation for web use
 # - Dispense job / sub tracking service for merchant side
+# - TEAL date math primitives so true monthly etc payments can be implemented
+#   instead of just frictionless spherical 4 week months ;)
 import base64
 import json
 import sys
@@ -784,7 +786,11 @@ def gen_template():
                 ),
                 # Don't allow further rekeys
                 Txn.rekey_to() == Global.zero_address(),
-                # Don't allow excessive fees
+                # Don't allow excessive fees. Theoretically this isn't
+                # future-proof as congestion could mandate a larger fee but I'm
+                # unaware of any other way to prevent the sender from burning
+                # the receiver's balance deposit through an unnecessarily large
+                # transaction fee.
                 Txn.fee() == Global.min_txn_fee(),
             )
         ),
