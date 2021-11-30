@@ -55,6 +55,8 @@
 #   the implementation of that separate from this though, so rewards can be
 #   properly distributed. I think there's already some tokenizations like wALGO
 #   that people can use, anyway?
+# - TypeScript implementation for web use
+# - Dispense job / sub tracking service for merchant side
 import base64
 import json
 import sys
@@ -448,7 +450,7 @@ def cash_out(sender, amount, cash_asset_id, sub_asset_id, app_id):
     _atomic_swap(b"CashOut", sender, amount, sub_asset_id, cash_asset_id, app_id)
 
 
-def _get_sub_account_secret(kcl, acl, wallet_handle, pw, sender, app_id):
+def _get_sub_account_secret(kcl, wallet_handle, pw, sender, app_id):
     private_key = kcl.export_key(wallet_handle, pw, sender)
     secret = base64.b64decode(
         util.sign_bytes(b"Subscription" + app_id.to_bytes(8, "big"), private_key)
@@ -481,7 +483,7 @@ def _find_free_sub_account(
     app_id: int,
     max_index: int = 64,
 ):
-    secret = _get_sub_account_secret(kcl, acl, wallet_handle, pw, sender, app_id)
+    secret = _get_sub_account_secret(kcl, wallet_handle, pw, sender, app_id)
     for i in range(max_index):
         account = NamedAccount(app_id, secret + i.to_bytes(8, "big"))
         address = account.get_address()
@@ -601,7 +603,7 @@ def submit(sender_file, receiver_file):
 @click.option("--max_index", type=click.INT, required=True, default=64)
 def list_cmd(sender, app_id, max_index):
     kcl, acl, wallet_handle, pw = get_wallet()
-    secret = _get_sub_account_secret(kcl, acl, wallet_handle, pw, sender, app_id)
+    secret = _get_sub_account_secret(kcl, wallet_handle, pw, sender, app_id)
     for i in range(max_index):
         account = NamedAccount(app_id, secret + i.to_bytes(8, "big"))
         info = acl.account_info(account.get_address())
