@@ -66,7 +66,7 @@ from algosdk.v2client.algod import AlgodClient
 import click
 from pyteal import *
 
-from algovault.client import get_wallet, raw_signing_address, sha512_256
+from algovault.client import get_wallet
 from algovault.naming import NamedAccount
 
 DEBUG_MODE = True
@@ -186,6 +186,7 @@ def _subtoken_approval(cash_asset_id, sub_asset_id):
         # Subscribe transaction must follow opt-in in the group
         Assert(Txn.group_index() + Int(1) < Global.group_size()),
         related_index.store(Txn.group_index() + Int(1)),
+        Assert(Gtxn[related_index.load()].type_enum() == TxnType.ApplicationCall),
         Assert(Gtxn[related_index.load()].application_args[0] == Bytes(b"Subscribe")),
         # And must be sent to the same app
         Assert(
@@ -651,6 +652,37 @@ def close(signer, sub_address, app_id):
         )
         for tx in group
     ]
+    group_txid = acl.send_transactions(group)
+    transaction.wait_for_confirmation(acl, group_txid, 5)
+
+
+@command_group.command()
+@click.option("--sub_address", required=True)
+@click.option("--sub_asset_id", type=click.INT, required=True, default=DEFAULT_SUB_ID)
+@click.option("--app_id", type=click.INT, required=True, default=DEFAULT_APP_ID)
+def dispense(sub_address, sub_asset_id, app_id):
+    kcl, acl, wallet_handle, pw = get_wallet()
+    suggested_params = acl.suggested_params()
+    sub_data = _get_sub_account_data(acl.account_info(sub_address), app_id)
+    app_address = _encode_app_address(app_id)
+    if not sub_data:
+        click.echo("Could not find sub information at the given address.", err=True)
+        sys.exit(1)
+    fund_txn = transaction.PaymentTxn(
+        sub_data["receiver"], suggested_params, app_address, suggested_params.min_fee
+    )
+    txn = transaction.ApplicationCallTxn(
+        sub_data["receiver"],
+        suggested_params,
+        app_id,
+        transaction.OnComplete.NoOpOC.real,
+        app_args=[b"Dispense", encoding.decode_address(sub_address)],
+        accounts=[sub_address, sub_data["sender"]],
+        foreign_assets=[sub_asset_id],
+    )
+    group = [fund_txn, txn]
+    transaction.assign_group_id(group)
+    group = [kcl.sign_transaction(wallet_handle, pw, tx) for tx in group]
     group_txid = acl.send_transactions(group)
     transaction.wait_for_confirmation(acl, group_txid, 5)
 
