@@ -122,11 +122,14 @@ def _subtoken_approval(cash_asset_id, sub_asset_id):
     arg_amount = Txn.application_args[3]
     arg_interval = Txn.application_args[4]
     on_subscribe = Seq(
+        # Check arg lengths
         Assert(Len(arg_sub_account) == Int(32)),
         Assert(Len(arg_payment_receiver) == Int(32)),
         Assert(Len(arg_amount) == Int(8)),
         Assert(Len(arg_interval) == Int(8)),
         Assert(App.optedIn(arg_sub_account, Global.current_application_id())),
+        # Must not already be a subscription
+        Assert(App.localGet(arg_sub_account, data_key) == Int(0)),
         App.localPut(
             arg_sub_account,
             data_key,
