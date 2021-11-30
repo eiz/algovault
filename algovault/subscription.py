@@ -90,10 +90,10 @@ def _encode_app_address(app_id):
 class SubscriptionAccount(template.Template):
     # See gen_template for the source code to this signature program.
     CODE = base64.b64decode(
-        "BSABASYCIENDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDA1N1Yig1AIAgQ"
-        "kJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkI1ASkxF1AtNAEEKTEXUC00AA"
-        "QRMSAyAxIQMQEyABIQRDEQIhJAACUxEIEGEkAAAQAxGBaACEFBQUFBQUFBEjEZIhI"
-        "xGYECEhEQRCJDMQiBABIxCSgSEEQiQw=="
+        "BSACAQAmAiBDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQwNTdWIoNQCAI"
+        "EJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCNQEpMRdQLTQBBCkxF1AtNA"
+        "AEETEgMgMSEDEBIxIQRDEQIhJAACUxEIEGEkAAAQAxGBaACEFBQUFBQUFBEjEZIhI"
+        "xGYECEhEQRCJDMQgjEjEJKBIQRCJD"
     )
 
     def __init__(self, app_id, sender, receiver):
@@ -106,8 +106,8 @@ class SubscriptionAccount(template.Template):
             return arr[:offset] + new_val + arr[offset + old_len :]
 
         code = SubscriptionAccount.CODE
-        code = replace(code, encoding.decode_address(self.receiver), 7, 32)
-        code = replace(code, encoding.decode_address(self.sender), 48, 32)
+        code = replace(code, encoding.decode_address(self.receiver), 8, 32)
+        code = replace(code, encoding.decode_address(self.sender), 49, 32)
         code = replace(code, self.app_id.to_bytes(8, "big"), 133, 8)
         return code
 
@@ -208,11 +208,11 @@ def _subtoken_approval(cash_asset_id, sub_asset_id):
             Txn.rekey_to()
             == Sha512_256(
                 Concat(
-                    Bytes(b"Program" + SubscriptionAccount.CODE[0:7]),
+                    Bytes(b"Program" + SubscriptionAccount.CODE[0:8]),
                     Gtxn[related_index.load()].application_args[2],
-                    Bytes(SubscriptionAccount.CODE[39:48]),
+                    Bytes(SubscriptionAccount.CODE[40:49]),
                     Gtxn[related_index.load()].sender(),
-                    Bytes(SubscriptionAccount.CODE[80:133]),
+                    Bytes(SubscriptionAccount.CODE[81:133]),
                     Itob(Global.current_application_id()),
                     Bytes(SubscriptionAccount.CODE[141:]),
                 )
@@ -629,6 +629,7 @@ def close(signer, sub_address, app_id):
     if sub_data is None:
         click.echo("Couldn't find a subscription at the given address", err=True)
         sys.exit(1)
+    fee_txn = transaction.PaymentTxn(signer, suggested_params, sub_address, 0)
     optout_txn = transaction.ApplicationCloseOutTxn(
         sub_address, suggested_params, app_id
     )
@@ -639,7 +640,11 @@ def close(signer, sub_address, app_id):
         0,
         close_remainder_to=sub_data["receiver"],
     )
-    group = [optout_txn, close_txn]
+    fee_txn.fee += optout_txn.fee
+    fee_txn.fee += close_txn.fee
+    optout_txn.fee = 0
+    close_txn.fee = 0
+    group = [fee_txn, optout_txn, close_txn]
     transaction.assign_group_id(group)
     program = sub_account.get_program()
     private_key = kcl.export_key(wallet_handle, pw, signer)
@@ -658,6 +663,8 @@ def close(signer, sub_address, app_id):
                 ],
             ),
         )
+        if tx.sender == sub_address
+        else kcl.sign_transaction(wallet_handle, pw, tx)
         for tx in group
     ]
     group_txid = acl.send_transactions(group)
@@ -786,12 +793,9 @@ def gen_template():
                 ),
                 # Don't allow further rekeys
                 Txn.rekey_to() == Global.zero_address(),
-                # Don't allow excessive fees. Theoretically this isn't
-                # future-proof as congestion could mandate a larger fee but I'm
-                # unaware of any other way to prevent the sender from burning
-                # the receiver's balance deposit through an unnecessarily large
-                # transaction fee.
-                Txn.fee() == Global.min_txn_fee(),
+                # Ensure that the initiator of the cancellation pays the fee
+                # (via fee pooling)
+                Txn.fee() == Int(0),
             )
         ),
         Cond(
