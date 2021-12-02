@@ -107,10 +107,11 @@ def _encode_app_address(app_id):
 class SubscriptionAccount(template.Template):
     # See gen_template for the source code to this signature program.
     CODE = base64.b64decode(
-        "BSACAQAmAiBDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQwNTdWIoNQCAI"
-        "EJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCNQEpMRdQLTQBBCkxF1AtNA"
-        "AEETEgMgMSEDEBIxIQRDEQIhJAACUxEIEGEkAAAQAxGBaACEFBQUFBQUFBEjEZIhI"
-        "xGYECEhEQRCJDMQgjEjEJKBIQRCJD"
+        "BSADAQACJgIgQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0MDU3ViKDUAg"
+        "CBCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQjUBKTEXUC00AQQpMRdQLT"
+        "QABBFEMSAyAxJEMQEjEkQyBIEDEkQzABAiEkQzAAcxABJEMwEAMQASRDMCADEAEkQ"
+        "xECISQAAkMRCBBhJAAAEAMRYiEkQxGBaACEFBQUFBQUFBEkQxGSQSRCJDMRYkEkQx"
+        "CCMSRDEJKBJEIkM="
     )
 
     def __init__(self, app_id, sender, receiver):
@@ -123,10 +124,23 @@ class SubscriptionAccount(template.Template):
             return arr[:offset] + new_val + arr[offset + old_len :]
 
         code = SubscriptionAccount.CODE
-        code = replace(code, encoding.decode_address(self.receiver), 8, 32)
-        code = replace(code, encoding.decode_address(self.sender), 49, 32)
-        code = replace(code, self.app_id.to_bytes(8, "big"), 133, 8)
+        code = replace(code, encoding.decode_address(self.receiver), 9, 32)
+        code = replace(code, encoding.decode_address(self.sender), 50, 32)
+        code = replace(code, self.app_id.to_bytes(8, "big"), 172, 8)
         return code
+
+    def get_address_pyteal(sender, receiver, app_id):
+        return Sha512_256(
+            Concat(
+                Bytes(b"Program" + SubscriptionAccount.CODE[0:9]),
+                receiver,
+                Bytes(SubscriptionAccount.CODE[41:50]),
+                sender,
+                Bytes(SubscriptionAccount.CODE[82:172]),
+                app_id,
+                Bytes(SubscriptionAccount.CODE[180:]),
+            )
+        )
 
 
 def _subtoken_approval(cash_asset_id, sub_asset_id):
@@ -223,16 +237,10 @@ def _subtoken_approval(cash_asset_id, sub_asset_id):
         # And must rekey to the sub control LogicSig to allow cancellation
         Assert(
             Txn.rekey_to()
-            == Sha512_256(
-                Concat(
-                    Bytes(b"Program" + SubscriptionAccount.CODE[0:8]),
-                    Gtxn[related_index.load()].application_args[2],
-                    Bytes(SubscriptionAccount.CODE[40:49]),
-                    Gtxn[related_index.load()].sender(),
-                    Bytes(SubscriptionAccount.CODE[81:133]),
-                    Itob(Global.current_application_id()),
-                    Bytes(SubscriptionAccount.CODE[141:]),
-                )
+            == SubscriptionAccount.get_address_pyteal(
+                sender=Gtxn[related_index.load()].sender(),
+                receiver=Gtxn[related_index.load()].application_args[2],
+                app_id=Itob(Global.current_application_id()),
             )
         ),
         success,
@@ -773,48 +781,47 @@ def gen_template():
     app_id = b"A" * 8
     sender = b"B" * 32
     receiver = b"C" * 32
-    store_receiver = ScratchVar(TealType.bytes)
-    store_sender = ScratchVar(TealType.bytes)
+    scratch_receiver = ScratchVar(TealType.bytes)
+    scratch_sender = ScratchVar(TealType.bytes)
     sig_blob = Concat(Bytes("Sub"), Txn.tx_id())
     verify_payment = Seq(
-        Assert(
-            And(
-                # Must be a close-out transaction
-                Txn.amount() == Int(0),
-                # Receiver always pays for the sub account, so receiver always gets the refund.
-                Txn.close_remainder_to() == Bytes(receiver),
-            )
-        ),
+        Assert(Txn.group_index() == Int(2)),
+        # Must be a close-out transaction
+        Assert(Txn.amount() == Int(0)),
+        # Receiver always pays for the sub account, so receiver always gets the refund.
+        Assert(Txn.close_remainder_to() == Bytes(receiver)),
         Approve(),
     )
     verify_app_call = Seq(
-        Assert(
-            And(
-                Itob(Txn.application_id()) == Bytes(app_id),
-                Or(
-                    Txn.on_completion() == OnComplete.OptIn,
-                    Txn.on_completion() == OnComplete.CloseOut,
-                ),
-            )
-        ),
+        Assert(Txn.group_index() == Int(1)),
+        Assert(Itob(Txn.application_id()) == Bytes(app_id)),
+        Assert(Txn.on_completion() == OnComplete.CloseOut),
         Approve(),
     )
     program = Seq(
-        store_receiver.store(Bytes(receiver)),
-        store_sender.store(Bytes(sender)),
+        scratch_receiver.store(Bytes(receiver)),
+        scratch_sender.store(Bytes(sender)),
+        # Cancellation must be authorized by the designated sender or receiver.
         Assert(
-            And(
-                Or(
-                    Ed25519Verify(sig_blob, Arg(0), store_sender.load()),
-                    Ed25519Verify(sig_blob, Arg(0), store_receiver.load()),
-                ),
-                # Don't allow further rekeys
-                Txn.rekey_to() == Global.zero_address(),
-                # Ensure that the initiator of the cancellation pays the fee
-                # (via fee pooling)
-                Txn.fee() == Int(0),
+            Or(
+                Ed25519Verify(sig_blob, Arg(0), scratch_sender.load()),
+                Ed25519Verify(sig_blob, Arg(0), scratch_receiver.load()),
             )
         ),
+        # Don't allow further rekeys
+        Assert(Txn.rekey_to() == Global.zero_address()),
+        # Ensure that the initiator of the cancellation pays the fee
+        # (via fee pooling)
+        Assert(Txn.fee() == Int(0)),
+        # Group must contain 3 transactions (first transaction pays fees from a
+        # different account)
+        Assert(Global.group_size() == Int(3)),
+        # First transaction must be a payment to this account
+        Assert(Gtxn[0].type_enum() == TxnType.Payment),
+        Assert(Gtxn[0].receiver() == Txn.sender()),
+        # Second and third must be the payment and closeout transactions below
+        Assert(Gtxn[1].sender() == Txn.sender()),
+        Assert(Gtxn[2].sender() == Txn.sender()),
         Cond(
             [Txn.type_enum() == TxnType.Payment, verify_payment],
             [Txn.type_enum() == TxnType.ApplicationCall, verify_app_call],
