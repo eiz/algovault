@@ -107,11 +107,11 @@ def _encode_app_address(app_id):
 class SubscriptionAccount(template.Template):
     # See gen_template for the source code to this signature program.
     CODE = base64.b64decode(
-        "BSADAQACJgIgQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0MDU3ViKDUAg"
-        "CBCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQjUBKTEXUC00AQQpMRdQLT"
+        "BSADAQACJgEDU3VigCBDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQzUAg"
+        "CBCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQjUBKDEXUC00AQQoMRdQLT"
         "QABBFEMSAyAxJEMQEjEkQyBIEDEkQzABAiEkQzAAcxABJEMwEAMQASRDMCADEAEkQ"
         "xECISQAAkMRCBBhJAAAEAMRYiEkQxGBaACEFBQUFBQUFBEkQxGSQSRCJDMRYkEkQx"
-        "CCMSRDEJKBJEIkM="
+        "CCMSRDEJNAASRCJD"
     )
 
     def __init__(self, app_id, sender, receiver):
@@ -124,7 +124,7 @@ class SubscriptionAccount(template.Template):
             return arr[:offset] + new_val + arr[offset + old_len :]
 
         code = SubscriptionAccount.CODE
-        code = replace(code, encoding.decode_address(self.receiver), 9, 32)
+        code = replace(code, encoding.decode_address(self.receiver), 14, 32)
         code = replace(code, encoding.decode_address(self.sender), 50, 32)
         code = replace(code, self.app_id.to_bytes(8, "big"), 172, 8)
         return code
@@ -132,9 +132,9 @@ class SubscriptionAccount(template.Template):
     def get_address_pyteal(sender, receiver, app_id):
         return Sha512_256(
             Concat(
-                Bytes(b"Program" + SubscriptionAccount.CODE[0:9]),
+                Bytes(b"Program" + SubscriptionAccount.CODE[0:14]),
                 receiver,
-                Bytes(SubscriptionAccount.CODE[41:50]),
+                Bytes(SubscriptionAccount.CODE[46:50]),
                 sender,
                 Bytes(SubscriptionAccount.CODE[82:172]),
                 app_id,
@@ -789,7 +789,7 @@ def gen_template():
         # Must be a close-out transaction
         Assert(Txn.amount() == Int(0)),
         # Receiver always pays for the sub account, so receiver always gets the refund.
-        Assert(Txn.close_remainder_to() == Bytes(receiver)),
+        Assert(Txn.close_remainder_to() == scratch_receiver.load()),
         Approve(),
     )
     verify_app_call = Seq(
