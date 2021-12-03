@@ -14,3 +14,15 @@
 #
 # You should have received a copy of the GNU Affero General Public License along
 # with algovault.  If not, see <https://www.gnu.org/licenses/>.
+
+import os
+import os.path
+
+QVOTE_CONTRACTS_DIR = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "..",
+    "third_party",
+    "qvote_contracts",
+    "contracts",
+    "teal",
+)

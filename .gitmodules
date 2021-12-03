@@ -1,0 +1,3 @@
+[submodule "third_party/qvote_contracts"]
+	path = third_party/qvote_contracts
+	url = https://github.com/QVote/AlgorandQVoteContracts

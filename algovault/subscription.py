@@ -86,6 +86,7 @@ from algosdk.kmd import KMDClient
 from algosdk.v2client.algod import AlgodClient
 import click
 from pyteal import *
+from algovault import token
 
 from algovault.client import get_wallet
 from algovault.naming import NamedAccount
@@ -731,48 +732,28 @@ def dispense(sub_address, sub_asset_id, app_id):
 @click.option("--creator", required=True)
 @click.option("--reserve", required=True)
 def create_token(creator, reserve):
-    kcl, acl, wallet_handle, pw = get_wallet()
-    suggested_params = acl.suggested_params()
-    txn = transaction.AssetCreateTxn(
+    token.create_max_token(
         creator,
-        suggested_params,
-        0xFFFFFFFFFFFFFFFF,
-        6,
-        False,
-        clawback=creator,
+        "SUB",
+        "Subscription Token",
         manager=creator,
         reserve=reserve,
-        unit_name="SUB",
-        asset_name="Subscription Token",
-        url="https://str.rs/subtoken",
+        clawback=creator,
     )
-    signed_txn = kcl.sign_transaction(wallet_handle, pw, txn)
-    acl.send_transaction(signed_txn)
-    transaction.wait_for_confirmation(acl, signed_txn.get_txid(), 5)
 
 
 @command_group.command()
 @click.option("--creator", required=True)
 @click.option("--reserve", required=True)
 def create_fake_token(creator, reserve):
-    kcl, acl, wallet_handle, pw = get_wallet()
-    suggested_params = acl.suggested_params()
-    txn = transaction.AssetCreateTxn(
+    token.create_max_token(
         creator,
-        suggested_params,
-        0xFFFFFFFFFFFFFFFF,
-        6,
-        False,
-        clawback=creator,
+        "FUSD",
+        "Fake USD",
         manager=creator,
         reserve=reserve,
-        unit_name="FUSD",
-        asset_name="Fake USD",
-        url="https://str.rs/subtoken",
+        clawback=creator,
     )
-    signed_txn = kcl.sign_transaction(wallet_handle, pw, txn)
-    acl.send_transaction(signed_txn)
-    transaction.wait_for_confirmation(acl, signed_txn.get_txid(), 5)
 
 
 @command_group.command()

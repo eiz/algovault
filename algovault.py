@@ -21,6 +21,7 @@ import click
 
 import algovault.client
 import algovault.naming
+import algovault.qvote_counterexample
 import algovault.subscription
 
 
@@ -30,6 +31,7 @@ def cli():
 
 
 cli.add_command(algovault.naming.command_group)
+cli.add_command(algovault.qvote_counterexample.command_group)
 cli.add_command(algovault.subscription.command_group)
 
 if __name__ == "__main__":
