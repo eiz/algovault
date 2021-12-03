@@ -82,7 +82,7 @@ import click
 from algovault import QVOTE_CONTRACTS_DIR, token
 from algovault.client import get_wallet
 
-DEFAULT_TOKEN_ID = 0
+DEFAULT_TOKEN_ID = 48922235
 
 
 def _compile_qvote_contract(acl, name):
@@ -120,7 +120,7 @@ def create_token(creator, reserve):
 @click.option("--creator", required=True)
 @click.option("--name", required=True)
 @click.option("--option", multiple=True)
-@click.option("--asset", type=click.INT, required=True)
+@click.option("--asset", type=click.INT, required=True, default=DEFAULT_TOKEN_ID)
 @click.option("--coefficient", type=click.INT, default=1)
 @click.option("--registration_seconds", type=click.INT, default=300)
 @click.option("--voting_seconds", type=click.INT, default=600)
