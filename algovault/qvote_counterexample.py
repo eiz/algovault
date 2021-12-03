@@ -14,6 +14,7 @@
 #
 # You should have received a copy of the GNU Affero General Public License along
 # with algovault.  If not, see <https://www.gnu.org/licenses/>.
+
 # QVote contract (as of 2021-12-03) is insecure and allows double registration,
 # and therefore double voting.
 #
