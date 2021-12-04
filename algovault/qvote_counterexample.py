@@ -18,6 +18,13 @@
 # QVote contract (as of 2021-12-03) is insecure and allows double registration,
 # and therefore double voting.
 #
+# This isn't the only vulnerability in this contract (for example, you can vote
+# multiple times on the same option in separate transactions, which violates the
+# expected n^2 voting cost, and anyone can add options to the proposal during
+# registration), but I think it's the most interesting. Possible solutions would
+# include using a frozen asset to represent voting power or requiring the tokens
+# to be locked into the contract until the voting time expires.
+#
 # $ ./algovault.py qvote-counter create-accounts \
 #   --sender SMCQDRS5MDSD3DLO6K2IJJU3ZVGN734X2GATUB23BZBQ5M75OBF5GFZGOE \
 #   --asset 47862693 \
@@ -68,8 +75,7 @@
 #
 # $ ./algovault.py qvote-counter status --proposal 48920164
 #
-# Definitely Yes: 8
-# Yes: 0
+# Definitely Yes: 8 Yes: 0
 import base64
 import json
 import os.path
